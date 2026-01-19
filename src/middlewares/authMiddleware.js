@@ -1,4 +1,16 @@
-// req , res , next
+/**
+ * Middleware: JWT Authentication
+ * Verifies JWT access token and extracts userId to request object
+ * Allows next middleware/controller to proceed if token is valid
+ * 
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ * @returns {void} Calls next() if authenticated, sends error response otherwise
+ * @example
+ * // In routes: router.get('/protected', auth, controller)
+ * // Sets req.userId from JWT payload
+ */
 const jwt = require('jsonwebtoken');
 const responseHandle = require('../helpers/responseHandle');
 

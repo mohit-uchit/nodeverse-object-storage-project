@@ -3,6 +3,19 @@ const responseHandle = require('../helpers/responseHandle');
 const { createRefreshToken } = require('../helpers/authHelper');
 const redis = require('../config/redis');
 
+/**
+ * Controller: User registration
+ * Creates a new user account with hashed password
+ * 
+ * @async
+ * @param {Object} req - Express request object
+ * @param {Object} req.body - Request body
+ * @param {string} req.body.name - User's full name
+ * @param {string} req.body.email - User's email address
+ * @param {string} req.body.password - User's password (will be hashed)
+ * @param {Object} res - Express response object
+ * @returns {Promise<void>} Sends JSON response with userId
+ */
 const createUser = async (req, res) => {
   try {
     const data = await userService.createUser(req.body);
@@ -12,6 +25,18 @@ const createUser = async (req, res) => {
   }
 };
 
+/**
+ * Controller: User login
+ * Authenticates user credentials and issues access and refresh tokens
+ * 
+ * @async
+ * @param {Object} req - Express request object
+ * @param {Object} req.body - Request body
+ * @param {string} req.body.email - User's email address
+ * @param {string} req.body.password - User's password
+ * @param {Object} res - Express response object
+ * @returns {Promise<void>} Sends JSON response with accessToken, sets refreshToken cookie
+ */
 const loginUser = async (req, res) => {
   try {
     const data = await userService.loginUser(req.body);
@@ -32,6 +57,17 @@ const loginUser = async (req, res) => {
   }
 };
 
+/**
+ * Controller: Rotate access token
+ * Generates a new access token using the refresh token
+ * 
+ * @async
+ * @param {Object} req - Express request object
+ * @param {Object} req.cookies - Cookies object
+ * @param {string} req.cookies.refreshToken - Refresh token from cookie
+ * @param {Object} res - Express response object
+ * @returns {Promise<void>} Sends JSON response with new accessToken
+ */
 const rotateToken = async (req, res) => {
   try {
     const data = await userService.rotateToken(req.cookies.refreshToken);
@@ -42,6 +78,17 @@ const rotateToken = async (req, res) => {
   }
 };
 
+/**
+ * Controller: User logout
+ * Invalidates the refresh token by removing it from Redis
+ * 
+ * @async
+ * @param {Object} req - Express request object
+ * @param {Object} req.cookies - Cookies object
+ * @param {string} req.cookies.refreshToken - Refresh token to invalidate
+ * @param {Object} res - Express response object
+ * @returns {Promise<void>} Clears refreshToken cookie and sends success response
+ */
 const logout = async (req, res) => {
   try {
     await userService.logout(req.cookies.refreshToken);
@@ -53,6 +100,16 @@ const logout = async (req, res) => {
   }
 };
 
+/**
+ * Controller: Get user profile
+ * Retrieves authenticated user's profile information
+ * 
+ * @async
+ * @param {Object} req - Express request object
+ * @param {string} req.userId - User ID from auth middleware
+ * @param {Object} res - Express response object
+ * @returns {Promise<void>} Sends JSON response with user data
+ */
 const getUser = async (req, res) => {
   try {
     const data = await userService.getUser(req.userId);
@@ -62,6 +119,17 @@ const getUser = async (req, res) => {
   }
 };
 
+/**
+ * Controller: Send OTP to email
+ * Generates and sends a one-time password to the user's email for verification
+ * 
+ * @async
+ * @param {Object} req - Express request object
+ * @param {Object} req.body - Request body
+ * @param {string} req.body.email - User's email address
+ * @param {Object} res - Express response object
+ * @returns {Promise<void>} Sends success response with message "Otp Sent Successfully"
+ */
 const sendOtp = async (req, res) => {
   try {
      await userService.sendOtp(req.body.email);
@@ -71,6 +139,18 @@ const sendOtp = async (req, res) => {
   }
 };
 
+/**
+ * Controller: Verify OTP
+ * Validates the OTP provided by the user and marks email as verified
+ * 
+ * @async
+ * @param {Object} req - Express request object
+ * @param {Object} req.body - Request body
+ * @param {string} req.body.email - User's email address
+ * @param {string} req.body.otp - The OTP to verify
+ * @param {Object} res - Express response object
+ * @returns {Promise<void>} Sends success response with message "Otp verified successfully"
+ */
 const verifyOtp = async (req, res) => {
   try {
      await userService.verifyOtp(req.body);

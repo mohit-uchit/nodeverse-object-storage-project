@@ -511,6 +511,196 @@ Content-Type: multipart/form-data
 
 ---
 
+#### 3️⃣ Get File Download URL
+```http
+GET /api/storage/objects?bucket=my-documents&key=resume.pdf
+Authorization: Bearer <accessToken>
+```
+
+**Query Parameters**:
+- `bucket`: Storage bucket name (required)
+- `key`: File key/path in bucket (required)
+
+**Response (200 OK)**:
+```json
+{
+  "status": 200,
+  "data": {
+    "downloadUrl": "http://localhost:3000/api/storage/downloads/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  },
+  "message": "Success"
+}
+```
+
+**What happens**:
+1. Verifies access token from Authorization header
+2. Finds file by bucket, key, and userId
+3. Checks if file status is "active" (ready for download)
+4. Generates HMAC-SHA256 signed token valid for 5 minutes
+5. Encodes blob ID and MIME type in the token
+6. Returns presigned download URL
+7. Token can be used anonymously (no auth required on download endpoint)
+
+**Error Cases**:
+- 401: Unauthorized (invalid or missing access token)
+- 400: File not found or access denied
+- 400: File status is not active
+
+---
+
+#### 4️⃣ Download File
+```http
+GET /api/storage/downloads/:token
+```
+
+**Token**: Obtained from get file download URL endpoint
+
+**Response (200 OK)**: File stream with appropriate headers
+```
+Content-Type: <mimeType>
+Content-Length: <fileSize>
+[Binary file data]
+```
+
+**Example Response Headers**:
+```
+HTTP/1.1 200 OK
+Content-Type: application/pdf
+Content-Length: 1024000
+Connection: keep-alive
+```
+
+**What happens**:
+1. Extracts token from URL parameter
+2. Verifies HMAC-SHA256 signature on token
+3. Checks if token has expired (5 minutes)
+4. Decodes blob ID and MIME type from token
+5. Finds file in blob storage by blob ID
+6. Sets appropriate Content-Type header
+7. Streams file directly to client
+8. Connection closes automatically after transfer
+
+**Error Cases**:
+- 400: Invalid or tampered token
+- 400: Token has expired
+- 404: File not found in blob storage
+
+**Security Note**:
+- Download token is signed and tamper-proof
+- Cannot be forged without the secret key
+- Expires in 5 minutes for security
+- No authentication required on download endpoint (token is the credential)
+
+---
+
+## 🔄 Complete File Upload & Download Flow Diagram
+
+```
+User                    API                  Database              Blob Store
+│                       │                        │                     │
+├──── POST register ────────>                    │                     │
+│                       │                        │                     │
+│                       ├─── Create User ───────>│                     │
+│                       │                        │                     │
+│<─ User Created ───────┤                        │                     │
+│                       │                        │                     │
+├──── POST login ───────────>                    │                     │
+│                       │                        │                     │
+│                       ├─── Verify Password ───>│                     │
+│                       │                        │                     │
+│<─ Access Token ───────┤                        │                     │
+│                       │                        │                     │
+├─ POST init-upload ────────> (with token)       │                     │
+│                       │                        │                     │
+│                       ├─ Create Blob ID ─────>│                     │
+│                       │                        │                     │
+│                       ├─ Create Object Record→│ {status: pending}   │
+│                       │                        │                     │
+│<─ Presigned URL ──────┤                        │                     │
+│                       │                        │                     │
+├─ PUT /upload/:token ──────────> (file data)   │                     │
+│                       │                        │                     │
+│                       ├─ Verify Token ────────────────────────────>│
+│                       │                        │                     │
+│                       ├─ Get Object Record ───>│                     │
+│                       │                        │                     │
+│                       ├─────────────────────────────> Write Blob ──>│
+│                       │                        │    blobId: xxxxx    │
+│                       │                        │                     │
+│                       ├─ Update Status ──────>│ {status: active}    │
+│                       │                        │                     │
+│<─ Success Response ───┤                        │                     │
+│                       │                        │                     │
+├─ GET /objects ───────────────> (with token)   │                     │
+│  (request download)   │                        │                     │
+│                       ├─ Verify Access Token ─>│                     │
+│                       │                        │                     │
+│                       ├─ Check File Status ───>│ {status: active}?   │
+│                       │                        │                     │
+│                       ├─ Sign Download Token ──┐                     │
+│                       │  (5 min expiry)        │                     │
+│                       │                        │                     │
+│<─ Download URL ───────┤                        │                     │
+│                       │                        │                     │
+├─ GET /downloads/:token ───────────────────────────────────────────>│
+│  (no auth needed)     │                        │                     │
+│                       │                        │                     │
+│                       ├─ Verify Token Signature ─────────────────────┤
+│                       │                        │                     │
+│                       ├─ Check Token Expiry ──────────────────────────┤
+│                       │                        │                     │
+│                       ├─────────────────────────────────> Read Blob ─┤
+│                       │                        │         (blobId)    │
+│                       │                        │                     │
+│<─ File Stream ────────┤<────────────────────────────────────────────│
+│  (with MIME type)     │                        │                     │
+│                       │                        │                     │
+```
+
+---
+
+## 🔐 File Download Security Flow
+
+```
+Client requests download URL
+│
+├─ GET /api/storage/objects?bucket=X&key=Y
+│  ├─ Auth header validated (JWT access token)
+│  ├─ User ID extracted from token
+│  ├─ File found in MongoDB
+│  ├─ Status verified (must be "active")
+│  └─ Download token generated with HMAC-SHA256
+│
+├─ Token payload contains:
+│  ├─ blobId (file identifier)
+│  ├─ mimeType (content type)
+│  └─ expiry (5 minutes from now)
+│
+├─ Token is base64-encoded for URL safety
+│
+└─ Returns presigned URL:
+   /api/storage/downloads/<base64_token>
+
+
+Client uses presigned URL for download
+│
+├─ GET /api/storage/downloads/:token
+│  ├─ Token decoded from base64
+│  ├─ HMAC signature verified
+│  │  └─ Prevents tampering/forgery
+│  ├─ Expiry timestamp checked
+│  │  └─ Token must not be older than 5 minutes
+│  ├─ BlobId and MIME type extracted
+│  ├─ File read from disk using blobId
+│  ├─ Content-Type header set
+│  └─ File streamed to client
+│
+└─ No authentication needed
+   (Token itself is the credential)
+```
+
+---
+
 ## 🔄 File Upload Flow Diagram
 
 ```
@@ -850,7 +1040,225 @@ const handleError = (res, error) => {
 
 ---
 
-### 8️⃣ Logging with Pino
+### 8️⃣ Token Signing & Verification (Presigned URLs)
+
+**File**: `src/services/security/signer.service.js`
+
+```javascript
+/**
+ * Sign token with HMAC signature
+ * Creates a tamper-proof token with JSON payload, expiry, and HMAC-SHA256 signature
+ * Encodes result in base64 for safe transmission
+ * 
+ * @param {Object} payload - Data to encode in token (e.g., { blobId, mimeType })
+ * @param {number} ttlSec - Time-to-live in seconds
+ * @returns {string} Base64-encoded signed token
+ */
+const signToken = (payload, ttlSec) => {
+  // Step 1: Calculate expiration time
+  const expiry = Date.now() + ttlSec * 1000;
+  
+  // Step 2: Create payload object with expiry
+  const data = JSON.stringify({ payload, expiry });
+  
+  // Step 3: Generate HMAC-SHA256 signature
+  const sig = crypto
+    .createHmac('sha256', secretKey)
+    .update(data)
+    .digest('hex');
+  
+  // Step 4: Combine data and signature
+  const token = `${data}.${sig}`;
+  
+  // Step 5: Encode in base64 for URL safety
+  return Buffer.from(token).toString('base64');
+};
+
+/**
+ * Verify token signature and expiry
+ * Decodes base64 token, validates HMAC signature, and checks expiration
+ * 
+ * @param {string} token - Base64-encoded signed token
+ * @returns {Object} Decoded payload if token is valid
+ * @throws {Error} If signature invalid or token expired
+ */
+const verifyToken = (token) => {
+  // Step 1: Decode from base64
+  const decoded = Buffer.from(token, 'base64').toString();
+  
+  // Step 2: Split data and signature
+  const [data, sig] = decoded.split('.');
+  
+  // Step 3: Recalculate expected signature
+  const expected = crypto
+    .createHmac('sha256', secretKey)
+    .update(data)
+    .digest('hex');
+  
+  // Step 4: Compare signatures (prevent tampering)
+  if (sig !== expected) {
+    throw new Error('Invalid Signature');
+  }
+  
+  // Step 5: Parse payload
+  const parsed = JSON.parse(data);
+  
+  // Step 6: Check expiration
+  if (Date.now() > parsed.expiry) {
+    throw new Error('Token Expired!');
+  }
+  
+  // Step 7: Return payload if valid
+  return parsed.payload;
+};
+```
+
+**What it does**:
+1. Creates HMAC-SHA256 signed tokens for presigned URLs
+2. Encodes payload, expiry, and signature together
+3. Base64 encodes for safe URL transmission
+4. Verifies signature to prevent tampering
+5. Checks expiration time
+6. Returns decoded payload if valid
+7. Used for both upload and download tokens
+
+**Security Features**:
+- **HMAC-SHA256**: Cannot forge tokens without secret key
+- **Expiration**: Tokens expire after specified time
+- **Tamper-proof**: Any modification invalidates signature
+- **Compact**: Encoded in base64 for URLs
+
+**Usage Examples**:
+```javascript
+// For upload: token expires in 5 minutes
+const uploadToken = signToken({ blobId: '123abc' }, 300);
+
+// For download: token expires in 5 minutes
+const downloadToken = signToken(
+  { blobId: '123abc', mimeType: 'application/pdf' }, 
+  300
+);
+
+// Verify token (throws error if invalid)
+const payload = verifyToken(uploadToken);
+```
+
+---
+
+### 9️⃣ File Retrieval for Download
+
+**File**: `src/services/storage/storage.service.js`
+
+```javascript
+const getObject = async (userId, bucket, key) => {
+  // Step 1: Find file in database with filters
+  const obj = await ObjectModel.findOne({
+    userId,                                    // Ensure ownership
+    bucket,                                    // Match bucket
+    key,                                       // Match filename
+    status: getKeyByValue(statusConst, 'active'), // Only active files
+  }, { blobId: 1, mimeType: 1 });             // Fetch only needed fields
+  
+  // Step 2: Check if file exists
+  if (!obj) {
+    throw new Error('File does not exist!!');
+  }
+  
+  // Step 3: Create download token (valid 5 minutes)
+  const token = signer.signToken(
+    { blobId: obj.blobId, mimeType: obj.mimeType },
+    300
+  );
+  
+  // Step 4: Return presigned download URL
+  return {
+    downloadUrl: `http://localhost:3000/api/storage/downloads/${token}`,
+  };
+};
+```
+
+**What it does**:
+1. Finds file by userId, bucket, and key (prevents unauthorized access)
+2. Checks file status is "active" (ready for download)
+3. Generates HMAC-signed download token with 5-minute expiry
+4. Embeds blobId and mimeType in token for download endpoint
+5. Returns presigned download URL (safe to share publicly)
+
+**Security Features**:
+- **User verification**: Only file owner can get download URL
+- **Status check**: Only "active" files can be downloaded
+- **Time-limited**: Token expires in 5 minutes
+- **Tamper-proof**: Token signature prevents forgery
+
+---
+
+### 🔟 File Streaming for Download
+
+**File**: `src/services/storage/storage.service.js`
+
+```javascript
+const downloadFile = async (token) => {
+  // Step 1: Verify and decode token
+  const { blobId, mimeType } = signer.verifyToken(token);
+  
+  // Step 2: Get file path from blob ID
+  const { filePath } = getBlobPath(blobId);
+  
+  // Step 3: Read file stream from disk
+  const stream = readBlob(filePath);
+  
+  // Step 4: Check if file exists
+  if (!stream) {
+    throw new Error('File not found!!!');
+  }
+  
+  // Step 5: Return stream with MIME type for controller
+  return {
+    stream,
+    mimeType
+  };
+};
+```
+
+**Controller Integration**:
+```javascript
+const downloadFile = async (req, res) => {
+  try {
+    // Get stream and MIME type from service
+    const { stream, mimeType } = await storageService.downloadFile(
+      req.params.token
+    );
+    
+    // Set appropriate content type
+    res.setHeader('Content-Type', mimeType);
+    
+    // Stream file to client
+    stream.pipe(res);
+  } catch (error) {
+    return responseHandle.handleError(res, error);
+  }
+};
+```
+
+**What it does**:
+1. Verifies token signature and expiration
+2. Extracts blobId and mimeType from token
+3. Constructs file path using blobId
+4. Opens readable stream to file
+5. Returns stream and MIME type to controller
+6. Controller pipes stream directly to HTTP response
+7. Sets appropriate Content-Type header
+8. Client receives file download
+
+**Streaming Advantages**:
+- **Memory efficient**: Doesn't load entire file in memory
+- **Large files**: Can stream multi-GB files
+- **Responsive**: Client receives data as it's read
+- **Error handling**: Pipe handles stream errors automatically
+
+---
+
+### 🔵 Logging with Pino
 
 **File**: `src/services/logging/pinoService.js`
 
@@ -932,7 +1340,27 @@ STEP 5: FILE UPLOAD
 ├─ Server: Update object status (pending → active)
 └─ Response: File metadata + success message
 
-STEP 6: TOKEN REFRESH (when access token expires)
+STEP 6: REQUEST FILE DOWNLOAD URL
+├─ User submits: bucket, key (with access token)
+├─ Server: Verify access token (JWT)
+├─ Server: Find file in database
+├─ Server: Check file status is "active"
+├─ Server: Extract blob ID and MIME type
+├─ Server: Generate signed download token (5 min)
+├─ Server: Encode blob ID + MIME type in token
+└─ Response: Presigned download URL
+
+STEP 7: DOWNLOAD FILE
+├─ User uses presigned download URL (no auth needed)
+├─ Server: Verify token signature (HMAC-SHA256)
+├─ Server: Check token expiry (not older than 5 min)
+├─ Server: Extract blob ID from token
+├─ Server: Find and open file in blob store
+├─ Server: Set Content-Type header from token
+├─ Server: Stream file to client
+└─ Response: Binary file data
+
+STEP 8: TOKEN REFRESH (when access token expires)
 ├─ User sends refresh token in cookie
 ├─ Server: Verify refresh token
 ├─ Server: Check refresh token in Redis
@@ -940,7 +1368,7 @@ STEP 6: TOKEN REFRESH (when access token expires)
 ├─ Server: Keep refresh token in Redis
 └─ Response: New access token
 
-STEP 7: USER LOGOUT
+STEP 9: USER LOGOUT
 ├─ User sends logout request with refresh token
 ├─ Server: Verify refresh token
 ├─ Server: Delete refresh token from Redis
@@ -1104,7 +1532,102 @@ curl -X POST http://localhost:3000/api/storage/init-upload \
     "key": "file.pdf",
     "mimeType": "application/pdf"
   }'
+
+# Get Download URL (for file you just uploaded)
+curl -X GET "http://localhost:3000/api/storage/objects?bucket=documents&key=file.pdf" \
+  -H "Authorization: Bearer <ACCESS_TOKEN>"
+
+# Download File (using the download URL from previous response)
+curl -X GET "http://localhost:3000/api/storage/downloads/<DOWNLOAD_TOKEN>" \
+  -o "downloaded-file.pdf"
+
+# Advanced: Save to file with headers
+curl -X GET "http://localhost:3000/api/storage/downloads/<DOWNLOAD_TOKEN>" \
+  -H "Accept: application/pdf" \
+  -v \
+  -o "downloaded-file.pdf"
 ```
+
+### Complete Upload & Download Workflow
+
+```bash
+# Step 1: Register user
+REGISTER_RESPONSE=$(curl -s -X POST http://localhost:3000/api/users/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "John Doe",
+    "email": "john@example.com",
+    "password": "SecurePass123!"
+  }')
+
+# Step 2: Login to get access token
+LOGIN_RESPONSE=$(curl -s -X POST http://localhost:3000/api/users/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "john@example.com",
+    "password": "SecurePass123!"
+  }')
+
+# Extract access token
+ACCESS_TOKEN=$(echo $LOGIN_RESPONSE | jq -r '.data.accessToken')
+
+# Step 3: Initialize upload
+INIT_RESPONSE=$(curl -s -X POST http://localhost:3000/api/storage/init-upload \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "bucket": "my-documents",
+    "key": "resume.pdf",
+    "mimeType": "application/pdf",
+    "metadata": {
+      "version": "1.0"
+    }
+  }')
+
+# Extract presigned upload URL
+PRESIGNED_URL=$(echo $INIT_RESPONSE | jq -r '.data.presignedUrl')
+
+# Step 4: Upload file using presigned URL
+curl -X PUT "http://localhost:3000$PRESIGNED_URL" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary "@resume.pdf"
+
+# Step 5: Get download URL
+DOWNLOAD_RESPONSE=$(curl -s -X GET "http://localhost:3000/api/storage/objects?bucket=my-documents&key=resume.pdf" \
+  -H "Authorization: Bearer $ACCESS_TOKEN")
+
+# Extract download token
+DOWNLOAD_TOKEN=$(echo $DOWNLOAD_RESPONSE | jq -r '.data.downloadUrl' | sed 's/.*downloads\///')
+
+# Step 6: Download file
+curl -X GET "http://localhost:3000/api/storage/downloads/$DOWNLOAD_TOKEN" \
+  -o "downloaded-resume.pdf"
+
+echo "File downloaded successfully as downloaded-resume.pdf"
+```
+
+### Testing with Postman
+
+**For GET /api/storage/objects endpoint:**
+1. Create new GET request
+2. URL: `http://localhost:3000/api/storage/objects?bucket=documents&key=file.pdf`
+3. Headers:
+   - `Authorization: Bearer <ACCESS_TOKEN>`
+4. Click Send
+5. Response will contain downloadUrl
+
+**For GET /api/storage/downloads/:token endpoint:**
+1. Create new GET request
+2. URL: `http://localhost:3000/api/storage/downloads/<DOWNLOAD_TOKEN>`
+3. No headers required (token is the credential)
+4. Click Send
+5. File will download automatically
+
+**Using Postman's Save Response Feature:**
+1. Get the download URL from /objects endpoint
+2. Use that URL in a new GET request to /downloads/:token
+3. Click "Send and Download"
+4. Postman will automatically save the file
 
 ### Using Postman
 1. Create new request

@@ -10,13 +10,25 @@ const {
 const redis = require('../../config/redis');
 const mailer = require('../../config/mail');
 
+/**
+ * Service: Create new user account
+ * Hashes password and creates user document in database
+ * 
+ * @async
+ * @param {Object} data - User registration data
+ * @param {string} data.name - User's full name
+ * @param {string} data.email - User's email address
+ * @param {string} data.password - User's password (will be hashed)
+ * @returns {Promise<Object>} Object with user id
+ * @throws {Error} If user already exists or database error occurs
+ */
 const createUser = async data => {
   const { name, email, password } = data;
   const hashedPassword = await bcrypt.hash(password, 10);
-  const existingUser = await User.findOne({email }, { _id: 1});
+  const existingUser = await User.findOne({ email }, { _id: 1 });
 
-  if(existingUser){
-     throw new Error('User already Exists!!!')
+  if (existingUser) {
+    throw new Error('User already Exists!!!');
   }
   const user = await User.create({ name, email, password: hashedPassword });
   return {
@@ -24,6 +36,17 @@ const createUser = async data => {
   };
 };
 
+/**
+ * Service: Authenticate user login
+ * Verifies email and password, returns access token
+ * 
+ * @async
+ * @param {Object} data - Login credentials
+ * @param {string} data.email - User's email address
+ * @param {string} data.password - User's password
+ * @returns {Promise<Object>} Object with userId and accessToken
+ * @throws {Error} If user not found or credentials invalid
+ */
 const loginUser = async data => {
   const { email, password } = data;
 
@@ -101,10 +124,28 @@ const rotateToken = async refreshToken => {
   );
 };
 
+/**
+ * Service: User logout
+ * Removes refresh token from Redis cache
+ * 
+ * @async
+ * @param {string} refreshToken - The refresh token to invalidate
+ * @returns {Promise<number>} Number of keys deleted from Redis
+ * @throws {Error} If token invalid or expired
+ */
 const logout = async refreshToken => {
   if (!refreshToken) {
     throw new Error('Unauthorized Access!!');
   }
+/**
+ * Service: Get user profile
+ * Retrieves user information by ID
+ * 
+ * @async
+ * @param {string} userId - The user's ID
+ * @returns {Promise<Object>} User document from database
+ * @throws {Error} If user not found
+ */
 
   const data = jwt.verify(refreshToken, process.env.REFRESH_TOKEN_SECRET);
 
@@ -119,20 +160,19 @@ const getUser = async userId => {
 };
 
 const sendOtp = async userEmail => {
-  const user = await User.findOne({ email : userEmail }, { _id : 1, emailVerified: 1});
-  if(user.emailVerified === true){
-     throw new Error('Email already Verified!!')
+  const user = await User.findOne(
+    { email: userEmail },
+    { _id: 1, emailVerified: 1 },
+  );
+  if (user.emailVerified === true) {
+    throw new Error('Email already Verified!!');
   }
   const otp = await generateOtp();
   const otpString = otp.toString();
   const hashedOtp = await bcrypt.hash(otpString, 10);
 
-  
-
-  console.log(user)
-
-  if(!user){
-     throw new Error('User does not exist!!')
+  if (!user) {
+    throw new Error('User does not exist!!');
   }
 
   await redis.set(`otp:${userEmail}`, hashedOtp, { EX: 120 });
@@ -194,25 +234,21 @@ const sendOtp = async userEmail => {
 
 const verifyOtp = async body => {
   const { otp, email } = body;
-  const key = `otp_attemps:${email}`
+  const key = `otp_attemps:${email}`;
   const attempts = await redis.incr(key);
 
-  if(attempts
-     === 1
-  ){
-     await redis.expire(key, 10 * 60)
+  if (attempts === 1) {
+    await redis.expire(key, 10 * 60);
   }
 
-  if(attempts > 5){
-     throw new Error('Too many attempts')
+  if (attempts > 5) {
+    throw new Error('Too many attempts');
   }
 
   const hashedOtp = await redis.get(`otp:${email}`);
   if (!hashedOtp) {
     throw new Error('Otp is expired!!');
   }
-
-
 
   const isMatch = await bcrypt.compare(otp, hashedOtp);
 
@@ -222,13 +258,11 @@ const verifyOtp = async body => {
 
   await redis.del(`otp:${email}`);
 
-  const user = await User.findOne({ email  }, { emailVerified: 1 });
-  console.log(email)
-  console.log(user)
+  const user = await User.findOne({ email }, { emailVerified: 1 });
   if (!user) {
     throw new Error('User not found!!');
   }
-  await User.updateOne({ email  }, { emailVerified: true });
+  await User.updateOne({ email }, { emailVerified: true });
 };
 module.exports = {
   createUser,
