@@ -1,0 +1,31 @@
+name : Node CI/CD Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name : Checkout Code
+        uses : actions/checkout@v3
+      
+      - name : Setup SSH Key
+        uses : | 
+            mkdir -p ~/.ssh
+            echo "${{ secrets.SSH_PRIVATE_KEY }}"
+            > ~/.ssh/id_rsa
+            chmod 600 ~/.ssh/id_rsa
+      - name : Deploy to Server
+        run : |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}
+          @${{ secrets.SERVER_IP }} << 'EOF'
+          cd ${{ secrets.APP_DIR }}
+          git pull origin main
+          docker build -t nodeapp .
+          docker stop nodeapp || true
+          docker rm nodeapp || true
+          docker run -d -p 3000:3000 --name nodeapp nodeapp
+          EOF
