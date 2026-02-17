@@ -19,35 +19,48 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASS }}
           port: 22 # change only if your SSH port is different
-          script: | # Use | for multi-line script
-            # Debug: print current dir and secrets (remove after testing)
-            pwd
-            echo "APP_DIR is: ${{ secrets.APP_DIR }}"
-            ls -la
-
-            # Safely change directory (fail gracefully if missing)
+          script: |
+            # Validate APP_DIR secret
             if [ -z "${{ secrets.APP_DIR }}" ]; then
-              echo "ERROR: APP_DIR secret is empty!"
+              echo "ERROR: APP_DIR secret is not set!"
               exit 1
             fi
 
-            cd "${{ secrets.APP_DIR }}" || { echo "Failed to cd to ${{ secrets.APP_DIR }} - check if directory exists on server"; exit 1; }
+            # Safely change directory
+            if [ ! -d "${{ secrets.APP_DIR }}" ]; then
+              echo "ERROR: Directory ${{ secrets.APP_DIR }} does not exist on server"
+              echo "Current directory contents:"
+              ls -la ~
+              exit 1
+            fi
 
-            # Now we're (hopefully) in the right place
-            git pull origin main || { echo "git pull failed - is this a git repo?"; exit 1; }
+            cd "${{ secrets.APP_DIR }}"
+            echo "Working directory: $(pwd)"
 
-            # Optional: remove old images to save space
-            docker system prune -f --filter "label=app=nodeapp" || true
+            # Check if it's a git repository
+            if [ ! -d ".git" ]; then
+              echo "ERROR: Not a git repository. Initializing..."
+              git init
+              git remote add origin https://github.com/${{ github.repository }}.git
+            fi
 
-            docker build -t nodeapp .
+            # Pull latest changes
+            git fetch origin main
+            git reset --hard origin/main
 
+            # Stop and remove old container
             docker stop nodeapp || true
             docker rm nodeapp || true
 
+            # Clean up old images
+            docker system prune -f || true
+
+            # Build and run
+            docker build -t nodeapp .
             docker run -d \
               --restart unless-stopped \
               -p 3000:3000 \
               --name nodeapp \
               nodeapp
 
-            echo "Deployment finished successfully"
+            echo "Deployment completed successfully"
