@@ -16,16 +16,15 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y sshpass
 
       - name: Deploy to Server
-        env:
-          SERVER_PASS: ${{ secrets.SERVER_PASS }}
-        run: |
-          sshpass -e ssh -o StrictHostKeyChecking=no \
-            ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} \
-            << 'EOF'
-          cd ${{ secrets.APP_DIR }}
-          git pull origin main
-          docker build -t nodeapp .
-          docker stop nodeapp || true
-          docker rm nodeapp || true
-          docker run -d -p 3000:3000 --name nodeapp nodeapp
-          EOF
+        uses: appleboy/ssh-action@v1.0.3   # or @master for latest
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          password: ${{ secrets.SERVER_PASS }}
+          script: |
+            cd ${{ secrets.APP_DIR }}
+            git pull origin main
+            docker build -t nodeapp .
+            docker stop nodeapp || true
+            docker rm nodeapp || true
+            docker run -d --restart unless-stopped -p 3000:3000 --name nodeapp nodeapp
