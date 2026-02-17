@@ -20,21 +20,23 @@ jobs:
           password: ${{ secrets.SERVER_PASS }}
           port: 22 # change only if your SSH port is different
           script: |
-            # Validate APP_DIR secret
-            if [ -z "${{ secrets.APP_DIR }}" ]; then
-              echo "ERROR: APP_DIR secret is not set!"
-              exit 1
+            # Determine the app directory
+            APP_DIR="${{ secrets.APP_DIR }}"
+            
+            # If APP_DIR not set, try to find the project directory
+            if [ -z "$APP_DIR" ] || [ ! -d "$APP_DIR" ]; then
+              if [ -d ~/nodeverse-object-storage-project ]; then
+                APP_DIR=~/nodeverse-object-storage-project
+                echo "Using auto-detected path: $APP_DIR"
+              else
+                echo "ERROR: Could not find nodeverse-object-storage-project"
+                echo "Expected at: ${{ secrets.APP_DIR }} or ~/nodeverse-object-storage-project"
+                ls -la ~
+                exit 1
+              fi
             fi
 
-            # Safely change directory
-            if [ ! -d "${{ secrets.APP_DIR }}" ]; then
-              echo "ERROR: Directory ${{ secrets.APP_DIR }} does not exist on server"
-              echo "Current directory contents:"
-              ls -la ~
-              exit 1
-            fi
-
-            cd "${{ secrets.APP_DIR }}"
+            cd "$APP_DIR"
             echo "Working directory: $(pwd)"
 
             # Check if it's a git repository
