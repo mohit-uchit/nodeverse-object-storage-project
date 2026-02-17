@@ -17,7 +17,7 @@ router.get('/', function (req, res) {
   return responseHandle.responseWithoutData(
     res,
     responseCode.OK,
-    'Welcome to Nodeverse!',
+    'Welcome to Nodeverse Deployment!',
   );
 });
 
