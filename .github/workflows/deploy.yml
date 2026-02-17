@@ -9,22 +9,45 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
-
-      - name: Install sshpass
-        run: sudo apt-get update && sudo apt-get install -y sshpass
+      - name: Checkout Code # Optional but good practice
+        uses: actions/checkout@v4
 
       - name: Deploy to Server
-        uses: appleboy/ssh-action@v1.0.3   # or @master for latest
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_IP }}
           username: ${{ secrets.SERVER_USER }}
           password: ${{ secrets.SERVER_PASS }}
-          script: |
-            cd ${{ secrets.APP_DIR }}
-            git pull origin main
+          port: 22 # change only if your SSH port is different
+          script: | # Use | for multi-line script
+            # Debug: print current dir and secrets (remove after testing)
+            pwd
+            echo "APP_DIR is: ${{ secrets.APP_DIR }}"
+            ls -la
+
+            # Safely change directory (fail gracefully if missing)
+            if [ -z "${{ secrets.APP_DIR }}" ]; then
+              echo "ERROR: APP_DIR secret is empty!"
+              exit 1
+            fi
+
+            cd "${{ secrets.APP_DIR }}" || { echo "Failed to cd to ${{ secrets.APP_DIR }} - check if directory exists on server"; exit 1; }
+
+            # Now we're (hopefully) in the right place
+            git pull origin main || { echo "git pull failed - is this a git repo?"; exit 1; }
+
+            # Optional: remove old images to save space
+            docker system prune -f --filter "label=app=nodeapp" || true
+
             docker build -t nodeapp .
+
             docker stop nodeapp || true
             docker rm nodeapp || true
-            docker run -d --restart unless-stopped -p 3000:3000 --name nodeapp nodeapp
+
+            docker run -d \
+              --restart unless-stopped \
+              -p 3000:3000 \
+              --name nodeapp \
+              nodeapp
+
+            echo "Deployment finished successfully"
